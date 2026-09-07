@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import storage from "./storage";
 
 const STORAGE_KEY = "zendt-waitlist-leads-v3";
@@ -111,34 +111,50 @@ export default function ZendtWaitlistTracker() {
   const [confirmDupe, setConfirmDupe] = useState(false);
   const [toast, setToast] = useState("");
   const [syncing, setSyncing] = useState(false);
-  const saveStateRef = useRef("idle");
-  saveStateRef.current = saveState;
-
-  const loadAll = useCallback(async (isInitial) => {
-    try {
-      const r = await storage.get(STORAGE_KEY);
-      if (r && r.value) setLeads(JSON.parse(r.value).map(migrate));
-      else if (isInitial) setLeads([]);
-    } catch (e) { if (isInitial) setLeads([]); }
-    try {
-      const c = await storage.get(CONFIG_KEY);
-      if (c && c.value) setConfig(JSON.parse(c.value));
-    } catch (e) { /* first run */ }
-    try {
-      const d = await storage.get(DUPELOG_KEY);
-      if (d && d.value) setDupeLog(JSON.parse(d.value));
-      else if (isInitial) setDupeLog([]);
-    } catch (e) { if (isInitial) setDupeLog([]); }
-    if (isInitial) setLoading(false);
-  }, []);
 
   useEffect(() => {
-    loadAll(true);
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible" && saveStateRef.current !== "saving") loadAll(false);
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [loadAll]);
+    let pending = 3;
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      setToast("Firestore is not ready yet. In the Firebase console, click Create database, choose Test mode, then try again.");
+    }, 8000);
+    const done = () => {
+      if (pending <= 0) return;
+      pending -= 1;
+      if (pending === 0) {
+        clearTimeout(timeout);
+        setLoading(false);
+      }
+    };
+    const fail = () => {
+      clearTimeout(timeout);
+      setLoading(false);
+    };
+
+    const unsubLeads = storage.subscribe(STORAGE_KEY, (value) => {
+      if (value) setLeads(JSON.parse(value).map(migrate));
+      else setLeads([]);
+      done();
+    }, fail);
+    const unsubConfig = storage.subscribe(CONFIG_KEY, (value) => {
+      if (value) {
+        try { setConfig(JSON.parse(value)); } catch (e) { /* ignore */ }
+      }
+      done();
+    }, fail);
+    const unsubDupes = storage.subscribe(DUPELOG_KEY, (value) => {
+      if (value) setDupeLog(JSON.parse(value));
+      else setDupeLog([]);
+      done();
+    }, fail);
+
+    return () => {
+      clearTimeout(timeout);
+      unsubLeads();
+      unsubConfig();
+      unsubDupes();
+    };
+  }, []);
 
   const persist = useCallback(async (next) => {
     setLeads(next);
@@ -479,13 +495,13 @@ export default function ZendtWaitlistTracker() {
 
         {showSettings && (
           <div style={{ ...card, marginTop: 20, padding: 22 }}>
-            <div style={{ fontFamily: "'Clash Display', system-ui", fontSize: 18, letterSpacing: "-0.02em", marginBottom: 4 }}>Cloud save</div>
+            <div style={{ fontFamily: "'Clash Display', system-ui", fontSize: 18, letterSpacing: "-0.02em", marginBottom: 4 }}>Firebase</div>
             <p style={{ color: C.muted, fontSize: 13, margin: "0 0 18px", maxWidth: 620 }}>
-              The full list is stored in the cloud, so every device sees the same people. Anyone marked as on the waitlist is also written to the Zendt Waitlist sheet.
+              The full list is stored in Cloud Firestore on zendt-app, so every device sees the same people. Anyone marked as on the waitlist is also written to the Zendt Waitlist sheet.
             </p>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <button style={btn} onClick={syncAll} disabled={syncing}>{syncing ? "Sending\u2026" : "Send " + unsynced.length + " pending to sheet"}</button>
-              <span style={{ ...mono, fontSize: 11, color: C.good }}>Cloud + sheet connected</span>
+              <span style={{ ...mono, fontSize: 11, color: C.good }}>Firestore + sheet connected</span>
             </div>
           </div>
         )}
