@@ -1,18 +1,17 @@
 const storage = {
   async get(key) {
-    try {
-      return { value: localStorage.getItem(key) };
-    } catch {
-      return { value: null };
-    }
+    const res = await fetch(`/api/kv?key=${encodeURIComponent(key)}`);
+    if (!res.ok) throw new Error("Could not load from cloud storage");
+    const data = await res.json();
+    return { value: data.value ?? null };
   },
   async set(key, value) {
-    try {
-      localStorage.setItem(key, value);
-      return true;
-    } catch {
-      return false;
-    }
+    const res = await fetch("/api/kv", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    return res.ok;
   },
 };
 
